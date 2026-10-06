@@ -1,20 +1,56 @@
-import { Component, OnInit, inject } from '@angular/core'
+import { Component, Inject, OnInit, inject } from '@angular/core'
 import { CommonModule } from '@angular/common'
+import { FormsModule } from '@angular/forms'
 import { Store } from '@ngrx/store'
 import { MatTableModule } from '@angular/material/table'
 import { MatButtonModule } from '@angular/material/button'
 import { MatFormFieldModule } from '@angular/material/form-field'
 import { MatSelectModule } from '@angular/material/select'
+import { MatInputModule } from '@angular/material/input'
 import { MatProgressBarModule } from '@angular/material/progress-bar'
 import { MatDividerModule } from '@angular/material/divider'
+import { MatDialogModule, MatDialog, MAT_DIALOG_DATA } from '@angular/material/dialog'
 import { RouteState } from '../store/route.reducer'
 import * as RouteActions from '../store/route.actions'
-import type { RoutePackage } from '../types'
+import type { PermissionStatus, RoutePackage } from '../types'
+
+@Component({
+  selector: 'app-permit-dialog',
+  standalone: true,
+  imports: [CommonModule, FormsModule, MatDialogModule, MatFormFieldModule, MatInputModule, MatSelectModule, MatButtonModule],
+  template: `
+    <h2 mat-dialog-title>变更运输许可 · {{ data.routeId }}</h2>
+    <mat-dialog-content>
+      <mat-form-field class="wide"><mat-label>许可编号</mat-label><input matInput [(ngModel)]="permit" placeholder="甘危运〔2026〕0831 号"></mat-form-field>
+      <mat-form-field class="wide"><mat-label>许可状态</mat-label>
+        <mat-select [(ngModel)]="permission">
+          <mat-option value="有效">有效</mat-option>
+          <mat-option value="缺失">缺失</mat-option>
+          <mat-option value="待补充">待补充</mat-option>
+        </mat-select>
+      </mat-form-field>
+      <p class="warn">许可变更后，该运输单相关会签确认将全部失效，需重新分批复核；风险分将同步重算。</p>
+    </mat-dialog-content>
+    <mat-dialog-actions align="end">
+      <button mat-button mat-dialog-close>取消</button>
+      <button mat-flat-button color="primary" [mat-dialog-close]="{ permit, permission }">确认变更</button>
+    </mat-dialog-actions>
+  `,
+  styles: [`.wide{width:100%}.warn{color:#d97706;font-size:13px;margin:4px 0 0}`],
+})
+export class PermitDialogComponent {
+  permit: string
+  permission: PermissionStatus
+  constructor(@Inject(MAT_DIALOG_DATA) public data: { routeId: string; permit: string; permission: PermissionStatus }) {
+    this.permit = data.permit
+    this.permission = data.permission
+  }
+}
 
 @Component({
   selector: 'app-workspace',
   standalone: true,
-  imports: [CommonModule, MatTableModule, MatButtonModule, MatFormFieldModule, MatSelectModule, MatProgressBarModule, MatDividerModule],
+  imports: [CommonModule, MatTableModule, MatButtonModule, MatFormFieldModule, MatSelectModule, MatProgressBarModule, MatDividerModule, MatDialogModule],
   template: `
     <main class="page">
       <div class="page-head"><div><p class="eyebrow">运输许可与路径编组</p><h1>危险货物运输路径审批</h1><p>核对货物类别、编组、许可与区段约束，生成可比较的候选路径。</p></div><div><button mat-stroked-button (click)="createAlternative()">生成替代方案</button> <button mat-flat-button color="primary" (click)="refresh()">重新校验</button></div></div>
@@ -32,7 +68,7 @@ import type { RoutePackage } from '../types'
             <ng-container matColumnDef="id"><th mat-header-cell *matHeaderCellDef>运输单</th><td mat-cell *matCellDef="let row"><b>{{row.id}}</b><small class="block">{{row.updatedAt}}</small></td></ng-container>
             <ng-container matColumnDef="cargo"><th mat-header-cell *matHeaderCellDef>货物 / 车次</th><td mat-cell *matCellDef="let row"><b>{{row.cargo}}</b><small class="block">{{row.hazardClass}} · {{row.trainCode}}</small></td></ng-container>
             <ng-container matColumnDef="route"><th mat-header-cell *matHeaderCellDef>起终点</th><td mat-cell *matCellDef="let row">{{row.origin}} → {{row.destination}}</td></ng-container>
-            <ng-container matColumnDef="permission"><th mat-header-cell *matHeaderCellDef>许可</th><td mat-cell *matCellDef="let row"><span [class.risk-high]="row.permission!=='有效'">{{row.permission}}</span></td></ng-container>
+            <ng-container matColumnDef="permission"><th mat-header-cell *matHeaderCellDef>许可</th><td mat-cell *matCellDef="let row"><span [class.risk-high]="row.permission!=='有效'">{{row.permission}}</span><small class="block">{{row.permit}}</small><button mat-button color="primary" (click)="changePermit(row)">变更许可</button></td></ng-container>
             <ng-container matColumnDef="score"><th mat-header-cell *matHeaderCellDef>风险分</th><td mat-cell *matCellDef="let row"><b [class.risk-high]="row.score>=70" [class.risk-mid]="row.score>=45 && row.score<70">{{row.score}}</b> / 100</td></ng-container>
             <ng-container matColumnDef="action"><th mat-header-cell *matHeaderCellDef></th><td mat-cell *matCellDef="let row"><button mat-button color="primary" (click)="select(row)">审核</button></td></ng-container>
             <tr mat-header-row *matHeaderRowDef="columns"></tr><tr mat-row *matRowDef="let row; columns: columns" [class.selected-row]="row.id === selectedId"></tr>
@@ -56,7 +92,8 @@ import type { RoutePackage } from '../types'
   `],
 })
 export class WorkspaceComponent implements OnInit {
-  private readonly store = inject(Store<{ routes: RouteState }>)
+  private readonly store = inject(Store<RouteState>)
+  private readonly dialog = inject(MatDialog)
   readonly state$ = this.store.select('routes')
   readonly columns = ['id', 'cargo', 'route', 'permission', 'score', 'action']
   selectedId = ''
@@ -67,4 +104,13 @@ export class WorkspaceComponent implements OnInit {
   refresh() { this.store.dispatch(RouteActions.loadRoutes()) }
   select(row: RoutePackage) { this.store.dispatch(RouteActions.selectRoute({ id: row.id })) }
   createAlternative() { this.store.dispatch(RouteActions.createAlternative()) }
+  changePermit(row: RoutePackage) {
+    const dialogRef = this.dialog.open(PermitDialogComponent, {
+      width: '460px',
+      data: { routeId: row.id, permit: row.permit, permission: row.permission },
+    })
+    dialogRef.afterClosed().subscribe((result: { permit: string; permission: PermissionStatus } | undefined) => {
+      if (result) this.store.dispatch(RouteActions.changePermit({ routeId: row.id, permit: result.permit, permission: result.permission }))
+    })
+  }
 }
