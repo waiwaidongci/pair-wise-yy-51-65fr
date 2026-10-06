@@ -1,8 +1,10 @@
-import { Component } from '@angular/core'
+import { Component, OnInit, inject } from '@angular/core'
 import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router'
 import { MatToolbarModule } from '@angular/material/toolbar'
 import { MatButtonModule } from '@angular/material/button'
 import { MatChipsModule } from '@angular/material/chips'
+import { Store } from '@ngrx/store'
+import { restoreSession } from './store/route.actions'
 
 @Component({
   selector: 'app-root',
@@ -23,4 +25,7 @@ import { MatChipsModule } from '@angular/material/chips'
     @media(max-width:900px){.topbar{height:auto;min-height:64px;padding:10px;flex-wrap:wrap}.brand{min-width:210px}nav{order:3;width:100%}.brand small,.topbar mat-chip{display:none}}
   `],
 })
-export class AppComponent {}
+export class AppComponent implements OnInit {
+  private readonly store = inject(Store)
+  ngOnInit() { this.store.dispatch(restoreSession()) }
+}

@@ -1,5 +1,6 @@
 import { Component, OnInit, inject } from '@angular/core'
 import { CommonModule } from '@angular/common'
+import { FormsModule } from '@angular/forms'
 import { Store } from '@ngrx/store'
 import { MatTableModule } from '@angular/material/table'
 import { MatButtonModule } from '@angular/material/button'
@@ -14,10 +15,26 @@ import type { RoutePackage } from '../types'
 @Component({
   selector: 'app-workspace',
   standalone: true,
-  imports: [CommonModule, MatTableModule, MatButtonModule, MatFormFieldModule, MatSelectModule, MatProgressBarModule, MatDividerModule],
+  imports: [CommonModule, FormsModule, MatTableModule, MatButtonModule, MatFormFieldModule, MatSelectModule, MatProgressBarModule, MatDividerModule],
   template: `
     <main class="page">
-      <div class="page-head"><div><p class="eyebrow">运输许可与路径编组</p><h1>危险货物运输路径审批</h1><p>核对货物类别、编组、许可与区段约束，生成可比较的候选路径。</p></div><div><button mat-stroked-button (click)="createAlternative()">生成替代方案</button> <button mat-flat-button color="primary" (click)="refresh()">重新校验</button></div></div>
+      <div class="page-head"><div><p class="eyebrow">运输许可与路径编组</p><h1>危险货物运输路径审批</h1><p>核对货物类别、编组、许可与区段约束，生成可比较的候选路径。</p></div><div><button mat-stroked-button (click)="createAlternative()">生成替代方案</button> <button mat-stroked-button (click)="refresh()">重新校验</button> <button mat-flat-button color="primary" (click)="save()">保存运输单</button></div></div>
+      @if ((state$ | async)?.conflict; as conflict) {
+        <div class="banner conflict">
+          <b>保存冲突</b><span>运输单 {{conflict.routeId}} 已在另一窗口保存为 v{{conflict.serverVersion}}，本地修改基于 v{{conflict.localVersion}}。请加载最新版本后重试，对方已保存的内容不会被覆盖。</span>
+          <button mat-stroked-button color="primary" (click)="refresh()">加载最新版本</button><button mat-button (click)="dismissConflict()">忽略</button>
+        </div>
+      }
+      @if ((state$ | async)?.notice; as notice) { <div class="banner ok">{{notice}}</div> }
+      @if ((state$ | async)?.error; as error) { <div class="banner error">{{error}}</div> }
+      @for (batch of (state$ | async)?.batches || []; track batch.id) {
+        @if (batch.status !== '已完成') {
+          <div class="banner batch" [class.paused]="batch.status === '已暂停'">
+            <b>复核批次 {{batch.id}}</b><span>{{batch.reason}} · 受影响区段 {{batch.cursor}}/{{batch.queue.length}} 已重算，其余区段沿用原结论</span>
+            @if (batch.status === '已暂停') { <span class="risk-high">{{batch.error}}</span><button mat-stroked-button color="primary" (click)="resume(batch.id)">从断点继续</button> }
+          </div>
+        }
+      }
       <div class="grid-4">
         <article class="card metric"><span>待审批路径</span><strong>{{ (state$ | async)?.routes?.length || 0 }}</strong><small>今日新增 2 条</small></article>
         <article class="card metric"><span>高风险区段</span><strong class="risk-high">{{ highRiskCount }}</strong><small>需安全与应急会签</small></article>
@@ -44,6 +61,14 @@ import type { RoutePackage } from '../types'
             <div class="rule" [class.active]="route.id === selectedId"><div><b>{{route.trainCode}}</b><span>{{route.segments.length}} 个运行区段</span></div><strong [class.risk-high]="route.score >= 70" [class.risk-mid]="route.score < 70">{{route.score >= 70 ? '高风险' : '需复核' }}</strong></div>
           }
           <mat-divider />
+          <h3>许可状态变更</h3>
+          <p class="hint">许可一变，该运输单全部区段的会签确认随即失效，并自动生成可恢复的复核批次。</p>
+          <mat-form-field appearance="outline" subscriptSizing="dynamic" style="width:100%">
+            <mat-label>当前运输单许可状态</mat-label>
+            <mat-select [ngModel]="selectedPermission" (ngModelChange)="changePermission($event)">
+              <mat-option value="有效">有效</mat-option><mat-option value="缺失">缺失</mat-option><mat-option value="待补充">待补充</mat-option>
+            </mat-select>
+          </mat-form-field>
           <h3>强制校验项</h3>
           <p>✓ 罐车编组隔离与押运资质</p><p class="risk-high">! S-203 水源地保护段缺少属地放行函</p><p>✓ 替代路径具备接卸条件</p>
           <button mat-flat-button color="primary" style="width:100%" (click)="createAlternative()">要求补充替代方案</button>
@@ -52,7 +77,10 @@ import type { RoutePackage } from '../types'
     </main>
   `,
   styles: [`
-    h2,h3{margin:0 0 12px}.table-wrap{overflow:auto}.block{display:block;color:#7a8798;margin-top:3px}.selected-row{background:#eff6ff}.rule{display:flex;justify-content:space-between;padding:13px 0;border-bottom:1px solid #edf0f5}.rule span{display:block;color:#7a8798;font-size:12px;margin-top:4px}.rule.active{padding-left:10px;border-left:3px solid #2563eb}.rule strong{font-size:12px}.toolbar{margin-bottom:10px}.toolbar mat-form-field{width:160px}
+    h2,h3{margin:0 0 12px}.table-wrap{overflow:auto}.block{display:block;color:#7a8798;margin-top:3px}.selected-row{background:#eff6ff}.rule{display:flex;justify-content:space-between;padding:13px 0;border-bottom:1px solid #edf0f5}.rule span{display:block;color:#7a8798;font-size:12px;margin-top:4px}.rule.active{padding-left:10px;border-left:3px solid #2563eb}.rule strong{font-size:12px}.toolbar{margin-bottom:10px}.toolbar mat-form-field{width:160px}.hint{color:#7a8798;font-size:12px;margin:0 0 8px}
+    .banner{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 16px;border-radius:8px;margin-bottom:14px;font-size:13px}.banner b{flex-shrink:0}
+    .banner.conflict{background:#fef2f2;border:1px solid #fecaca;color:#991b1b}.banner.ok{background:#f0fdf4;border:1px solid #bbf7d0;color:#166534}.banner.error{background:#fef2f2;border:1px solid #fecaca;color:#991b1b}
+    .banner.batch{background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af}.banner.batch.paused{background:#fffbeb;border-color:#fde68a;color:#92400e}
   `],
 })
 export class WorkspaceComponent implements OnInit {
@@ -60,11 +88,22 @@ export class WorkspaceComponent implements OnInit {
   readonly state$ = this.store.select('routes')
   readonly columns = ['id', 'cargo', 'route', 'permission', 'score', 'action']
   selectedId = ''
+  selectedPermission: RoutePackage['permission'] = '待补充'
   highRiskCount = 0
 
-  constructor() { this.state$.subscribe((state) => { this.selectedId = state.selectedRouteId; this.highRiskCount = state.routes.flatMap((route: RoutePackage) => route.segments).filter((segment: RoutePackage['segments'][number]) => segment.level === '高').length }) }
+  constructor() {
+    this.state$.subscribe((state) => {
+      this.selectedId = state.selectedRouteId
+      this.selectedPermission = state.routes.find((route: RoutePackage) => route.id === state.selectedRouteId)?.permission ?? '待补充'
+      this.highRiskCount = state.routes.flatMap((route: RoutePackage) => route.segments).filter((segment: RoutePackage['segments'][number]) => segment.level === '高').length
+    })
+  }
   ngOnInit() { this.refresh() }
   refresh() { this.store.dispatch(RouteActions.loadRoutes()) }
   select(row: RoutePackage) { this.store.dispatch(RouteActions.selectRoute({ id: row.id })) }
   createAlternative() { this.store.dispatch(RouteActions.createAlternative()) }
+  save() { if (this.selectedId) this.store.dispatch(RouteActions.saveRoute({ routeId: this.selectedId })) }
+  dismissConflict() { this.store.dispatch(RouteActions.dismissConflict()) }
+  resume(batchId: string) { this.store.dispatch(RouteActions.resumeBatch({ batchId })) }
+  changePermission(permission: RoutePackage['permission']) { if (this.selectedId) this.store.dispatch(RouteActions.updatePermission({ routeId: this.selectedId, permission })) }
 }

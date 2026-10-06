@@ -9,7 +9,7 @@ import { MatCheckboxModule } from '@angular/material/checkbox'
 import { MatDividerModule } from '@angular/material/divider'
 import maplibregl, { LngLatBounds, Map as MapLibreMap } from 'maplibre-gl'
 import { length, lineString } from '@turf/turf'
-import type { RoutePackage, RiskSegment } from '../types'
+import type { RiskLevel, RoutePackage, RiskSegment } from '../types'
 import { RouteState } from '../store/route.reducer'
 import * as RouteActions from '../store/route.actions'
 
@@ -35,13 +35,20 @@ import * as RouteActions from '../store/route.actions'
           }
           <mat-divider />
           <h3>路径测算</h3><p>实测里程：{{routeLength}} km</p><p>预计运行：{{estimatedTime}}</p><p>限制区段：{{restrictedCount}} 处</p>
+          <mat-form-field appearance="outline" subscriptSizing="dynamic" style="width:100%">
+            <mat-label>调整选中区段风险等级</mat-label>
+            <mat-select [ngModel]="selectedLevel" (ngModelChange)="changeLevel($event)">
+              <mat-option value="高">高</mat-option><mat-option value="中">中</mat-option><mat-option value="低">低</mat-option>
+            </mat-select>
+          </mat-form-field>
+          <p class="hint">风险等级一变，相关会签确认随即失效，仅为受影响区段生成补充意见。</p>
           <button mat-flat-button color="primary" style="width:100%" (click)="requireAlternative()">要求补充绕行方案</button>
         </aside>
       </div>
     </main>
   `,
   styles: [`
-    h2,h3{margin:0 0 10px}.panel-head{display:flex;justify-content:space-between}.segment{width:100%;display:flex;justify-content:space-between;text-align:left;gap:10px;padding:13px;margin:6px 0;border:1px solid #e1e7ef;background:#fff;border-radius:6px;color:inherit;cursor:pointer}.segment.active{border-color:#2563eb;background:#f5f8ff}.segment b,.segment small,.segment em{display:block}.segment small{color:#7a8798;margin:4px 0}.segment em{font-size:12px;color:#475569;font-style:normal}
+    h2,h3{margin:0 0 10px}.panel-head{display:flex;justify-content:space-between}.segment{width:100%;display:flex;justify-content:space-between;text-align:left;gap:10px;padding:13px;margin:6px 0;border:1px solid #e1e7ef;background:#fff;border-radius:6px;color:inherit;cursor:pointer}.segment.active{border-color:#2563eb;background:#f5f8ff}.segment b,.segment small,.segment em{display:block}.segment small{color:#7a8798;margin:4px 0}.segment em{font-size:12px;color:#475569;font-style:normal}.hint{font-size:12px;color:#7a8798;margin:0 0 10px}
   `],
 })
 export class RiskMapComponent implements AfterViewInit, OnDestroy {
@@ -51,6 +58,7 @@ export class RiskMapComponent implements AfterViewInit, OnDestroy {
   private map?: MapLibreMap
   selectedRouteId = ''
   selectedSegmentId = ''
+  selectedLevel: RiskLevel = '中'
   layers = { tunnel: true, bridge: true, water: true, population: true }
 
   get selectedRoute(): RoutePackage | undefined { let route: RoutePackage | undefined; this.state$.subscribe((state) => { route = state.routes.find((item: RoutePackage) => item.id === state.selectedRouteId) }).unsubscribe(); return route }
@@ -58,7 +66,7 @@ export class RiskMapComponent implements AfterViewInit, OnDestroy {
   get estimatedTime() { return `${Math.round(Number(this.routeLength) / 55 * 60 + this.restrictedCount * 8)} 分钟` }
   get restrictedCount() { return this.selectedRoute?.segments.filter((segment) => segment.status === '需绕行').length ?? 0 }
 
-  constructor() { this.state$.subscribe((state) => { this.selectedRouteId = state.selectedRouteId; this.selectedSegmentId = state.selectedSegmentId; if (this.map) this.drawRoute() }) }
+  constructor() { this.state$.subscribe((state) => { this.selectedRouteId = state.selectedRouteId; this.selectedSegmentId = state.selectedSegmentId; this.selectedLevel = state.routes.flatMap((route: RoutePackage) => route.segments).find((segment: RiskSegment) => segment.id === state.selectedSegmentId)?.level ?? '中'; if (this.map) this.drawRoute() }) }
   ngAfterViewInit() {
     this.map = new maplibregl.Map({
       container: this.mapEl.nativeElement,
@@ -72,6 +80,7 @@ export class RiskMapComponent implements AfterViewInit, OnDestroy {
   selectRoute(id: string) { this.store.dispatch(RouteActions.selectRoute({ id })) }
   selectSegment(segment: RiskSegment) { this.store.dispatch(RouteActions.selectSegment({ id: segment.id })); this.map?.flyTo({ center: segment.coordinates[0], zoom: 8 }) }
   requireAlternative() { this.store.dispatch(RouteActions.createAlternative()) }
+  changeLevel(level: RiskLevel) { if (this.selectedSegmentId) this.store.dispatch(RouteActions.updateSegmentLevel({ id: this.selectedSegmentId, level })) }
   fitRoute() { if (!this.map || !this.selectedRoute) return; const bounds = new LngLatBounds(); this.selectedRoute.segments.flatMap((segment) => segment.coordinates).forEach((point) => bounds.extend(point)); this.map.fitBounds(bounds, { padding: 50 }) }
   refreshLayers() { for (const [id, visible] of Object.entries(this.layers)) { if (this.map?.getLayer(id)) this.map.setLayoutProperty(id, 'visibility', visible ? 'visible' : 'none') } }
   private addRiskLayers() {
